@@ -1,10 +1,9 @@
-import json
+import datetime
 
 from sources import locations
 from database import Mysql
 import re
 import requests as request
-from transliterate import translit
 from translate import Translator
 
 
@@ -17,17 +16,42 @@ def ru_to_eng(country):
 
 
 def generator_of_location_data(location):
-    data = {
-        'id': location['location_id'],
-        'name': location['name'],
-        'city': location['location_city'],
-        'address': location['location_address'],
-        'category': location['category']
-    }
-    return data
+    try:
+        data = {
+            'id': location['location_id'],
+            'name': location['name'],
+            'city': location['location_city'],
+            'address': location['location_address'],
+            'category': location['category']
+        }
+        return data
+    except Exception as e:
+        f = open('log.txt', 'w')
+        error_info = str(e) + '| ' + str(datetime.date.today()) + '\n'
+        f.write(error_info)
+        f.close()
+        pass
 
 
-def generator_of_post_data(post, geo_id):
+def generator_owner_data(owner):
+    try:
+        data = {
+            'id': owner['pk'],
+            'user_name': owner['username'],
+            'full_name': owner['full_name'],
+            'profile_picture': owner['profile_pic_url'],
+            'profile_link': 'https://www.instagram.com/' + owner['username'] + '/'
+        }
+        return data
+    except Exception as e:
+        f = open('log.txt', 'w')
+        error_info = str(e) + '| ' + str(datetime.date.today()) + '\n'
+        f.write(error_info)
+        f.close()
+        pass
+
+
+def generator_of_post_data(post, geo_id, res_id):
     try:
         m_type = post['media_type']
         code = post['code']
@@ -61,19 +85,24 @@ def generator_of_post_data(post, geo_id):
             media_link = post['video_versions'][0]['url']
 
         data = {
+            'id': post['pk'],
             'code': code,
             'post_link': post_link,
             'media_link': media_link,
-            'user_name': post['user']['username'],
             'media_type': media_type,
             'caption': caption,
             'comment_count': comment_count,
             'like_count': likes_count,
+            'res_id': res_id,
             'geo_id': geo_id
         }
         return data
     except Exception as e:
-        print(e)
+        f = open('log.txt', 'w')
+        error_info = str(e) + '| ' + str(datetime.date.today()) + '/n'
+        f.write(error_info)
+        f.close()
+        pass
 
 
 class Parser:
@@ -139,22 +168,43 @@ class Parser:
 
     def parse(self):
         self.db.create_location_table_if_not_exits()
+        self.db.create_owner_table_if_not_exists()
         self.db.create_post_table_if_not_exists()
-        for location in locations:
-            url = self.__get_url(location)
-            if url != self.location_error and url != self.city_error and url != self.country_error:
-                response = request.get(url, params={'__a': 1}).json()
-                location_data = generator_of_location_data(response['native_location_data']['location_info'])
-                if not self.db.exists_location(location_data['id']):
-                    self.db.insert_location(location_data)
 
-                geo_id = self.db.get_geo_id_location_id(location_data['id'])
-                ranked = response['native_location_data']['ranked']['sections']
-                for section in ranked:
-                    for media in section['layout_content']['medias']:
-                        post_data = generator_of_post_data(media['media'], geo_id)
-                        if not self.db.exists_post(post_data['code']):
-                            self.db.insert_posts(post_data)
-            else:
-                print(url)
+        for location in locations:
+            try:
+                url = self.__get_url(location)
+                if url != self.location_error and url != self.city_error and url != self.country_error:
+                    response = request.get(url, params={'__a': 1}).json()
+                    location_data = generator_of_location_data(response['native_location_data']['location_info'])
+                    if not self.db.exists_location(location_data['id']):
+                        self.db.insert_location(location_data)
+
+                    geo_id = self.db.get_geo_id_by_location_id(location_data['id'])
+                    ranked = response['native_location_data']['ranked']['sections']
+                    for section in ranked:
+                        try:
+                            for media in section['layout_content']['medias']:
+                                owner = media['media']['user']
+                                if not self.db.exists_owner(owner['pk']):
+                                    self.db.insert_owner(generator_owner_data(owner))
+
+                                owner_id = self.db.get_owner_id_by_owner_pk(owner['pk'])
+                                post_data = generator_of_post_data(media['media'], geo_id, owner_id)
+                                if not self.db.exists_post(post_data['code']):
+                                    self.db.insert_posts(post_data)
+                        except Exception as e:
+                            f = open('log.txt', 'w')
+                            error_info = str(e) + '| ' + str(datetime.date.today()) + ' | ' + location + '\n'
+                            f.write(error_info)
+                            f.close()
+                            pass
+                else:
+                    print(url)
+            except Exception as e:
+                f = open('log.txt', 'w')
+                error_info = str(e) + '| ' + str(datetime.date.today()) + ' | ' + location + '\n'
+                f.write(error_info)
+                f.close()
+                pass
         print('Locations and posts successfully inserted to table!')
